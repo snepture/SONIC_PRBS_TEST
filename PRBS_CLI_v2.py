@@ -158,6 +158,8 @@ async def check_init(socketclient):
         # await asyncio.sleep(10)
 
 def port2serdes(port_id):
+    serdes_speed = ''
+    port_speed = ''
     with open(PORT_CONFIG_PATH,'r') as file1:
         raw = file1.read()
         raw_list = raw.split('\n')
@@ -174,6 +176,7 @@ def port2serdes(port_id):
     elif port_speed == '100000':
         serdes_speed = '25'
     port_first_lane = lanes.split(',')[0]
+    lane_num = len(lanes.split(','))
     # print(port_first_lane)
 
     with open(SERDES_JSON_PATH,'r') as file2:
@@ -197,7 +200,28 @@ def port2serdes(port_id):
                     final_slice_id = key.split(',')[0]
                     final_ifg_id = key.split(',')[1]
                     final_serdes_id = key.split(',')[2]
-    return final_slice_id, final_ifg_id, final_serdes_id
+    return final_slice_id, final_ifg_id, final_serdes_id, lane_num
+
+def parseInt(interface):
+    result = []
+    tmp = None
+    if "Ethernet" in interface:
+        tmp = interface.lstrip("Ethernet").split(',')
+    elif "eth" in interface:
+        tmp = interface.lstrip("eth").split(',')
+    elif "Eth" in interface:
+        tmp = interface.lstrip("Eth").split(',')
+    else:
+        print("Error in parsing interface ID, exit!")
+        sys.exit()
+    for i in tmp:
+        if '-' in i:
+            a, b = i.split('-')
+            for index in range(int(a), int(b) + 1):
+                result.append("Ethernet" + str(index))
+        else:
+            result.append("Ethernet" + i.strip())
+    return result
 
 async def initsock():
     sock = SocketClient()
@@ -250,116 +274,129 @@ def prbs_test():
 @coro
 async def create_prbs_test(tx, rx, prbs_test_start, prbs_test_stop, interface, pattern_type):
     socketclient = await initsock()
-    slice, ifg, serdes = port2serdes(interface)
+    int_list = parseInt(interface)
     if pattern_type == "31":
         pattern_type = "PRBS31"
-    command = "slice,ifg,serdes = {},{},{}\n".format(slice, ifg, serdes)
-    socketclient.write(command)
-    print(f"Interface {interface}: slice {slice}, ifg {ifg}, serdes {serdes}\n [{command.strip()}]\n")
-    await asyncio.sleep(1)
-    command = "mac_port = la_device.get_mac_port({}, {}, {})\n".format(slice, ifg, serdes)
-    socketclient.write(command)
-    print(f"Setting mac port...\n[{command.strip()}]\n")
-    await asyncio.sleep(1)
+    for i in range(len(int_list)):
+        slice, ifg, serdes, lane_num = port2serdes(int_list[i])
+        command = f"slice{i},ifg{i},serdes{i} = {slice},{ifg},{serdes}\n"
+        socketclient.write(command)
+        print(f"Interface {int_list[i]}: slice{i} {slice}, ifg{i} {ifg}, serdes{i} {serdes}\n [{command.strip()}]\n")
+        await asyncio.sleep(1)
+        command = f"mac_port{i} = la_device.get_mac_port({slice}, {ifg}, {serdes})\n"
+        socketclient.write(command)
+        print(f"Setting mac port...\n[{command.strip()}]\n")
+        await asyncio.sleep(1)
 
-    if tx:
-        if prbs_test_start:
-            if pattern_type == "NONE":
-                click.echo("pattern_type need to be set as 31\n")
-                exit()
-            command = "mac_port.set_serdes_continuous_tuning_enabled(False)\n"
-            socketclient.write(command)
-            print(f"Mac port serdes continuous tuning setting to False...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "prbs_mode = sdk.la_mac_port.serdes_test_mode_e_{}\n".format(pattern_type)
-            socketclient.write(command)
-            print(f"Setting serdes mode to {pattern_type} ...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "mac_port.set_serdes_test_mode(sdk.la_serdes_direction_e_TX, prbs_mode)\n"
-            socketclient.write(command)
-            print(f"Setting mac port to PRBS test TX with mode {pattern_type} ... \n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-        elif prbs_test_stop:
-            if pattern_type != "NONE":
-                click.echo("pattern_type need to be set as NONE\n")
-                exit()
-            command = "prbs_mode = sdk.la_mac_port.serdes_test_mode_e_{}\n".format(pattern_type)
-            socketclient.write(command)
-            print(f"Setting serdes mode to {pattern_type} ...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "mac_port.set_serdes_test_mode(sdk.la_serdes_direction_e_TX, prbs_mode)\n"
-            socketclient.write(command)
-            print(f"Setting mac port to PRBS test TX with mode {pattern_type} ... \n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "mac_port.set_serdes_continuous_tuning_enabled(True)\n"
-            socketclient.write(command)
-            print(f"Mac port serdes continuous tuning setting to True...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-    elif rx:
-        if prbs_test_start:
-            if pattern_type == "NONE":
-                click.echo("pattern_type need to be set as 31\n")
-                exit()
-            command = "mac_port.set_serdes_continuous_tuning_enabled(False)\n"
-            socketclient.write(command)
-            print(f"Mac port serdes continuous tuning setting to False...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "prbs_mode = sdk.la_mac_port.serdes_test_mode_e_{}\n".format(pattern_type)
-            socketclient.write(command)
-            print(f"Setting serdes mode to {pattern_type} ...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "test_info = mac_port.read_serdes_test_ber()\n"
-            socketclient.write(command)
-            print(f"Refreshing serdes test status...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "mac_port.set_serdes_test_mode(sdk.la_serdes_direction_e_RX, prbs_mode)\n"
-            socketclient.write(command)
-            print(f"Setting mac port to PRBS test RX with mode {pattern_type} ... \n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "test_info = mac_port.read_serdes_test_ber()\n"
-            socketclient.write(command)
-            print(f"Refreshing serdes test status...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
+        if tx:
+            if prbs_test_start:
+                if pattern_type == "NONE":
+                    click.echo("pattern_type need to be set as 31\n")
+                    exit()
+                command = f"mac_port{i}.set_serdes_continuous_tuning_enabled(False)\n"
+                socketclient.write(command)
+                print(f"Mac port {i} serdes continuous tuning setting to False...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = "prbs_mode = sdk.la_mac_port.serdes_test_mode_e_{}\n".format(pattern_type)
+                socketclient.write(command)
+                print(f"Setting serdes mode to {pattern_type} ...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = f"mac_port{i}.set_serdes_test_mode(sdk.la_serdes_direction_e_TX, prbs_mode)\n"
+                socketclient.write(command)
+                print(f"Setting mac port {i} to PRBS test TX with mode {pattern_type} ... \n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+            elif prbs_test_stop:
+                if pattern_type != "NONE":
+                    click.echo("pattern_type need to be set as NONE\n")
+                    exit()
+                command = "prbs_mode = sdk.la_mac_port.serdes_test_mode_e_{}\n".format(pattern_type)
+                socketclient.write(command)
+                print(f"Setting serdes mode to {pattern_type} ...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = f"mac_port{i}.set_serdes_test_mode(sdk.la_serdes_direction_e_TX, prbs_mode)\n"
+                socketclient.write(command)
+                print(f"Setting mac port {i} to PRBS test TX with mode {pattern_type} ... \n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = f"mac_port{i}.set_serdes_continuous_tuning_enabled(True)\n"
+                socketclient.write(command)
+                print(f"Mac port {i} serdes continuous tuning setting to True...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+        elif rx:
+            if prbs_test_start:
+                if pattern_type == "NONE":
+                    click.echo("pattern_type need to be set as 31\n")
+                    exit()
+                command = f"mac_port{i}.set_serdes_continuous_tuning_enabled(False)\n"
+                socketclient.write(command)
+                print(f"Mac port {i} serdes continuous tuning setting to False...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = "prbs_mode = sdk.la_mac_port.serdes_test_mode_e_{}\n".format(pattern_type)
+                socketclient.write(command)
+                print(f"Setting serdes mode to {pattern_type} ...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = f"test_info = mac_port{i}.read_serdes_test_ber()\n"
+                socketclient.write(command)
+                print(f"Refreshing serdes test status...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = f"mac_port{i}.set_serdes_test_mode(sdk.la_serdes_direction_e_RX, prbs_mode)\n"
+                socketclient.write(command)
+                print(f"Setting mac port {i} to PRBS test RX with mode {pattern_type} ... \n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = f"test_info = mac_port{i}.read_serdes_test_ber()\n"
+                socketclient.write(command)
+                print(f"Refreshing serdes test status...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+            elif prbs_test_stop:
+                if pattern_type != "NONE":
+                    click.echo("pattern_type need to be set as NONE\n")
+                    exit()
+                command = f"prbs_mode = sdk.la_mac_port.serdes_test_mode_e_{pattern_type}\n"
+                socketclient.write(command)
+                print(f"Setting serdes mode to {pattern_type} ...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = f"mac_port{i}.set_serdes_test_mode(sdk.la_serdes_direction_e_RX, prbs_mode)\n"
+                socketclient.write(command)
+                print(f"Setting mac port {i} to PRBS test RX with mode {pattern_type} ... \n[{command.strip()}]\n")
+                await asyncio.sleep(1)
+                command = f"mac_port{i}.set_serdes_continuous_tuning_enabled(True)\n"
+                socketclient.write(command)
+                print(f"Mac port {i} serdes continuous tuning setting to True...\n[{command.strip()}]\n")
+                await asyncio.sleep(1)
 
-            command = "print(\"slice {}, ifg {}, serdes {}, Err count0: {}, prbs_lock: {}\".format(slice, ifg, serdes, test_info.errors, test_info.prbs_lock))"
-            socketclient.write(command)
-            print(f"[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            res = await asyncio.wait_for(socketclient.read(), timeout=5)
-            print(f">>> {res}\n")
-            await asyncio.sleep(1)
-            command = "print(\"slice {}, ifg {}, serdes {}, Err count0: {}, prbs_lock: {}\".format(slice, ifg, serdes, test_info.errors, test_info.prbs_lock))"
-            socketclient.write(command)
-            print(f"[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            res = await asyncio.wait_for(socketclient.read(), timeout=5)
-            print(f">>> {res}\n")
-            await asyncio.sleep(1)
-            command = "print(\"slice {}, ifg {}, serdes {}, Err count0: {}, prbs_lock: {}\".format(slice, ifg, serdes, test_info.errors, test_info.prbs_lock))"
-            socketclient.write(command)
-            print(f"[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            res = await asyncio.wait_for(socketclient.read(), timeout=5)
-            print(f">>> {res}\n")
-            await asyncio.sleep(1)
-        elif prbs_test_stop:
-            if pattern_type != "NONE":
-                click.echo("pattern_type need to be set as NONE\n")
-                exit()
-            command = "prbs_mode = sdk.la_mac_port.serdes_test_mode_e_{}\n"
-            socketclient.write(command)
-            print(f"Setting serdes mode to {pattern_type} ...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "mac_port.set_serdes_test_mode(sdk.la_serdes_direction_e_RX, prbs_mode)\n"
-            socketclient.write(command)
-            print(f"Setting mac port to PRBS test RX with mode {pattern_type} ... \n[{command.strip()}]\n")
-            await asyncio.sleep(1)
-            command = "mac_port.set_serdes_continuous_tuning_enabled(True)\n"
-            socketclient.write(command)
-            print(f"Mac port serdes continuous tuning setting to True...\n[{command.strip()}]\n")
-            await asyncio.sleep(1)
+@click.command()
+@click.option(
+    "--interface",
+    required = True,
+    type = str,
+    help = "define the interface"
+)
+@coro
+async def check_status(interface):
+    socketclient = await initsock()
+    int_list = parseInt(interface)
+    for i in range(len(int_list)):
+        slice, ifg, serdes, lane_num = port2serdes(int_list[i])
+        command = f"slice{i},ifg{i},serdes{i} = {slice},{ifg},{serdes}\n"
+        socketclient.write(command)
+        print(f"Interface {int_list[i]}: slice{i} {slice}, ifg{i} {ifg}, serdes{i} {serdes}\n [{command.strip()}]\n")
+        command = f"mac_port{i} = la_device.get_mac_port({slice}, {ifg}, {serdes})\n"
+        socketclient.write(command)
+        print(f"Setting mac port...\n[{command.strip()}]\n")
+        command = f"test_info{i} = mac_port{i}.read_serdes_test_ber()\n"
+        socketclient.write(command)
+        command = "print(test_info.errors)"
+        socketclient.write(command)
+        errors = await asyncio.wait_for(socketclient.read(), timeout=5)
+        command = "print(test_info.prbs_lock)"
+        socketclient.write(command)
+        prbs_lock = await asyncio.wait_for(socketclient.read(), timeout=5)
+        print(f"PRBS RX {int_list[i]} state:\n\n")
+        for n in range(lane_num):
+            print(f"Lane {n} : PRBS_LOCK : {prbs_lock.lstrip('[').rstrip(']').split(',')[n].strip()}, Error count : {errors.lstrip('[').rstrip(']').split(',')[n].strip()}")
+        await asyncio.sleep(1)
 
 prbs_test.add_command(create_prbs_test,name="prbs_test")
+prbs_test.add_command(check_status,name="prbs_stats")
 
 
 if __name__ == '__main__':
